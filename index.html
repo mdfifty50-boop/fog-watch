@@ -55,7 +55,7 @@ footer{padding:8px 12px;border-top:1px solid var(--line);font-size:13px;color:va
 <div id="map"></div>
 <footer>
   <div class="legend" id="legend"></div>
-  <div>Data: Open-Meteo weather models (visibility + fog code), auto-refresh every 10 min. These are <b>model estimates, not live sensors</b>: fog patches can be smaller and denser than shown. Never use while driving.</div>
+  <div>Data: Open-Meteo weather models (visibility, fog code, plus a fog-risk check from humidity/dew point/wind), auto-refresh every 10 min. These are <b>model estimates, not live sensors</b>: fog patches can be smaller and denser than shown. Never use while driving.</div>
 </footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -70,6 +70,12 @@ const CLASSES=[
 ];
 const FOG_CODES={45:'Fog',48:'Freezing (rime) fog'};
 const cls=v=>CLASSES.find(c=>v<c.max);
+// Fog risk from saturation: models often miss shallow radiation fog, so flag near-saturated calm air
+const risk=c=>{const sp=(c.temperature_2m??99)-(c.dew_point_2m??-99),w=c.wind_speed_10m??99;
+  if(sp<=1&&w<15)return{lvl:'HIGH',txt:`Fog risk HIGH: air saturated (temp only ${sp.toFixed(1)}° above dew point, wind ${w} km/h)`};
+  if(sp<=2&&w<20)return{lvl:'MED',txt:`Fog risk MEDIUM: near saturation (${sp.toFixed(1)}° spread)`};return null};
+const RISKY={name:'Fog likely (saturated air)',col:'#f7e463',max:1000,advice:'Model shows clear but air is saturated: expect fog patches. Slow down.'};
+const eff=(v,c)=>{const k=cls(v),r=risk(c);return(r&&r.lvl==='HIGH'&&k.max>1000)?RISKY:k};
 const $=id=>document.getElementById(id);
 $('legend').innerHTML=CLASSES.map(c=>`<span><i style="background:${c.col}"></i>${c.name} (${c.max===Infinity?'>5 km':(c.max<1000?'<'+c.max+' m':'<'+c.max/1000+' km')})</span>`).join('');
 
@@ -99,32 +105,32 @@ async function load(fit){
   $('meta').textContent='Loading…';
   const url='https://api.open-meteo.com/v1/forecast?latitude='+pts.map(p=>p[0].toFixed(4)).join(',')+
     '&longitude='+pts.map(p=>p[1].toFixed(4)).join(',')+
-    '&current=visibility,weather_code,relative_humidity_2m,temperature_2m,dew_point_2m&timezone=auto';
+    '&current=visibility,weather_code,relative_humidity_2m,temperature_2m,dew_point_2m,wind_speed_10m&timezone=auto';
   try{
     const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);
     let data=await r.json();if(!Array.isArray(data))data=[data];
     layer.clearLayers();
     const hLat=dLat/(N-1),hLon=dLon/(N-1);
-    let worst=null;
+    let worst=null,hi=0;
     data.slice(0,N*N).forEach((d,k)=>{
       const c=d.current||{},v=c.visibility,[la,lo]=pts[k];
       if(v==null)return;
-      const k2=cls(v),fogType=FOG_CODES[c.weather_code];
-      if(!worst||v<worst.v)worst={v,la,lo};
+      const k2=eff(v,c),rk=risk(c),fogType=FOG_CODES[c.weather_code];
+      if(!worst||v<worst.v)worst={v,la,lo};if(rk&&rk.lvl==='HIGH')hi++;
       L.rectangle([[la-hLat,lo-hLon],[la+hLat,lo+hLon]],{stroke:false,fillColor:k2.col,fillOpacity:k2.max===Infinity?0.12:0.5})
-       .bindPopup(`<b>${esc(k2.name)}</b><br>Visibility: ${fmtVis(v)}${fogType?'<br>Type: '+esc(fogType):''}<br>Humidity: ${c.relative_humidity_2m??'n/a'}%<br>Temp ${c.temperature_2m??'?'}° / dew point ${c.dew_point_2m??'?'}°<br>${esc(k2.advice)}`)
+       .bindPopup(`<b>${esc(k2.name)}</b><br>Visibility: ${fmtVis(v)}${fogType?'<br>Type: '+esc(fogType):''}${rk?'<br><b>'+esc(rk.txt)+'</b>':''}<br>Humidity: ${c.relative_humidity_2m??'n/a'}%<br>Temp ${c.temperature_2m??'?'}° / dew point ${c.dew_point_2m??'?'}°<br>${esc(k2.advice)}`)
        .addTo(layer);
     });
     const me=(data[N*N]||{}).current||{};
     if(me.visibility!=null){
-      const k=cls(me.visibility),t=FOG_CODES[me.weather_code];
+      const k=eff(me.visibility,me),t=FOG_CODES[me.weather_code],r=risk(me);
       $('here').textContent=fmtVis(me.visibility);
       $('here').style.color=k.col;
-      $('hereType').textContent=`${k.name}${t?' · '+t:''} — ${k.advice}`;
+      $('hereType').textContent=`${k.name}${t?' · '+t:''} — ${k.advice}${r?' · '+r.txt:''}`;
     }else{$('here').textContent='n/a';$('hereType').textContent='No visibility data from the model here.'}
     const when=me.time?new Date(me.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
     $('meta').innerHTML=`Model time ${esc(when)} · checked ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`+
-      (worst&&worst.v<1000?` · <span class="warn">Worst nearby: ${fmtVis(worst.v)}</span>`:'');
+      (hi?` · <span class="warn">${hi} of ${N*N} areas: high fog risk</span>`:'')+(worst&&worst.v<1000?` · <span class="warn">Worst nearby: ${fmtVis(worst.v)}</span>`:'');
     if(fit)map.fitBounds([[center.lat-dLat,center.lon-dLon],[center.lat+dLat,center.lon+dLon]]);
   }catch(e){$('meta').textContent='Could not load data ('+e.message+'). Check connection, then Refresh.'}
 }
