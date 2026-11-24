@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fog Watch</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* VOICE: calm, clinical, night-driving legible
+   IDEA: an aviation visibility chart
+   PICTURE: the map itself, cells coloured by fog class
+   COLOUR/TYPE: deep navy ground, white-to-red fog scale; system sans, large numerals
+   LAYOUT: status strip on top, map fills the rest, legend bar at bottom */
+:root{--bg:#0b1433;--ink:#eef2ff;--mute:#9aa6cf;--line:#26325e}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{display:flex;flex-direction:column}
+header{padding:10px 12px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,button,select{font:inherit;font-size:16px;min-height:44px;border-radius:10px;border:1px solid var(--line);background:#141f47;color:var(--ink);padding:0 12px}
+input{flex:1 1 180px}
+button{cursor:pointer;font-weight:600}
+button.pri{background:#3b4fd8;border-color:#3b4fd8}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #f7e463;outline-offset:1px}
+#status{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+#here{font-size:28px;font-weight:800;line-height:1.1}
+#hereType{font-weight:700}
+#meta{color:var(--mute);font-size:13px}
+#map{flex:1;min-height:300px}
+footer{padding:8px 12px;border-top:1px solid var(--line);font-size:13px;color:var(--mute)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:4px}
+.legend span{display:inline-flex;align-items:center;gap:6px;color:var(--ink)}
+.legend i{width:14px;height:14px;border-radius:3px;display:inline-block}
+#results{position:absolute;z-index:1000;background:#141f47;border:1px solid var(--line);border-radius:10px;max-width:420px;display:none}
+#results button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:none;font-weight:400}
+.warn{color:#f7e463}
+</style>
+</head>
+<body>
+<header>
+  <div class="row" style="position:relative">
+    <input id="q" placeholder="Search a place (e.g. Riyadh)" autocomplete="off">
+    <button id="go">Search</button>
+    <button id="gps" class="pri">Use my location</button>
+    <div id="results"></div>
+  </div>
+  <div class="row">
+    <label for="rad" style="color:var(--mute);font-size:13px">Area</label>
+    <select id="rad"><option value="25">±25 km</option><option value="50" selected>±50 km</option><option value="100">±100 km</option></select>
+    <button id="refresh">Refresh now</button>
+    <span id="meta">Pick a location to start.</span>
+  </div>
+  <div id="status"><span id="here">—</span><span id="hereType"></span></div>
+</header>
+<div id="map"></div>
+<footer>
+  <div class="legend" id="legend"></div>
+  <div>Data: Open-Meteo weather models (visibility + fog code), auto-refresh every 10 min. These are <b>model estimates, not live sensors</b>: fog patches can be smaller and denser than shown. Never use while driving.</div>
+</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+{
+// Fog classes (visibility in metres), after common met-office usage
+const CLASSES=[
+  {max:50,   name:'Dense fog – extreme',  col:'#e8452c',advice:'Do not drive. Pull fully off the road.'},
+  {max:200,  name:'Thick fog',            col:'#f08a24',advice:'Very dangerous. Crawl speed or stop safely.'},
+  {max:1000, name:'Fog',                  col:'#f7e463',advice:'Slow down, low beams + fog lights.'},
+  {max:5000, name:'Mist / haze',          col:'#4fc1c6',advice:'Reduced visibility, stay alert.'},
+  {max:Infinity,name:'Clear',             col:'#3b4fd8',advice:'No fog expected.'}
+];
+const FOG_CODES={45:'Fog',48:'Freezing (rime) fog'};
+const cls=v=>CLASSES.find(c=>v<c.max);
+const $=id=>document.getElementById(id);
+$('legend').innerHTML=CLASSES.map(c=>`<span><i style="background:${c.col}"></i>${c.name} (${c.max===Infinity?'>5 km':(c.max<1000?'<'+c.max+' m':'<'+c.max/1000+' km')})</span>`).join('');
+
+const map=L.map('map',{zoomControl:true}).setView([24.71,46.68],8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map);
+const layer=L.layerGroup().addTo(map);
+let center=null,marker=null,timer=null;
+const N=7; // 7x7 grid
+
+const fmtVis=v=>v==null?'n/a':(v<1000?Math.round(v)+' m':(v/1000).toFixed(1)+' km');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function setCenter(lat,lon,label){
+  center={lat,lon,label:label||`${lat.toFixed(3)}, ${lon.toFixed(3)}`};
+  if(marker)marker.remove();
+  marker=L.marker([lat,lon]).addTo(map).bindPopup(esc(center.label));
+  load(true);
+  clearInterval(timer);timer=setInterval(()=>load(false),10*60*1000);
+}
+
+async function load(fit){
+  if(!center)return;
+  const km=+$('rad').value,dLat=km/111,dLon=km/(111*Math.cos(center.lat*Math.PI/180));
+  const pts=[];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++)pts.push([center.lat-dLat+2*dLat*i/(N-1),center.lon-dLon+2*dLon*j/(N-1)]);
+  pts.push([center.lat,center.lon]);
+  $('meta').textContent='Loading…';
+  const url='https://api.open-meteo.com/v1/forecast?latitude='+pts.map(p=>p[0].toFixed(4)).join(',')+
+    '&longitude='+pts.map(p=>p[1].toFixed(4)).join(',')+
+    '&current=visibility,weather_code,relative_humidity_2m,temperature_2m,dew_point_2m&timezone=auto';
+  try{
+    const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);
+    let data=await r.json();if(!Array.isArray(data))data=[data];
+    layer.clearLayers();
+    const hLat=dLat/(N-1),hLon=dLon/(N-1);
+    let worst=null;
+    data.slice(0,N*N).forEach((d,k)=>{
+      const c=d.current||{},v=c.visibility,[la,lo]=pts[k];
+      if(v==null)return;
+      const k2=cls(v),fogType=FOG_CODES[c.weather_code];
+      if(!worst||v<worst.v)worst={v,la,lo};
+      L.rectangle([[la-hLat,lo-hLon],[la+hLat,lo+hLon]],{stroke:false,fillColor:k2.col,fillOpacity:k2.max===Infinity?0.12:0.5})
+       .bindPopup(`<b>${esc(k2.name)}</b><br>Visibility: ${fmtVis(v)}${fogType?'<br>Type: '+esc(fogType):''}<br>Humidity: ${c.relative_humidity_2m??'n/a'}%<br>Temp ${c.temperature_2m??'?'}° / dew point ${c.dew_point_2m??'?'}°<br>${esc(k2.advice)}`)
+       .addTo(layer);
+    });
+    const me=(data[N*N]||{}).current||{};
+    if(me.visibility!=null){
+      const k=cls(me.visibility),t=FOG_CODES[me.weather_code];
+      $('here').textContent=fmtVis(me.visibility);
+      $('here').style.color=k.col;
+      $('hereType').textContent=`${k.name}${t?' · '+t:''} — ${k.advice}`;
+    }else{$('here').textContent='n/a';$('hereType').textContent='No visibility data from the model here.'}
+    const when=me.time?new Date(me.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+    $('meta').innerHTML=`Model time ${esc(when)} · checked ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`+
+      (worst&&worst.v<1000?` · <span class="warn">Worst nearby: ${fmtVis(worst.v)}</span>`:'');
+    if(fit)map.fitBounds([[center.lat-dLat,center.lon-dLon],[center.lat+dLat,center.lon+dLon]]);
+  }catch(e){$('meta').textContent='Could not load data ('+e.message+'). Check connection, then Refresh.'}
+}
+
+$('gps').onclick=()=>{
+  if(!navigator.geolocation){$('meta').textContent='Location not available in this browser – search instead.';return}
+  $('meta').textContent='Getting your location…';
+  navigator.geolocation.getCurrentPosition(p=>setCenter(p.coords.latitude,p.coords.longitude,'My location'),
+    e=>{$('meta').textContent='Location blocked ('+e.message+'). Search or tap the map.'},{enableHighAccuracy:true,timeout:15000});
+};
+async function search(){
+  const q=$('q').value.trim();if(!q)return;
+  const box=$('results');
+  try{
+    const r=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=6&name='+encodeURIComponent(q));
+    const d=await r.json(),list=d.results||[];
+    box.innerHTML=list.length?list.map((p,i)=>`<button data-i="${i}">${esc(p.name)}, ${esc(p.admin1||'')} ${esc(p.country||'')}</button>`).join(''):'<button disabled>No matches</button>';
+    box.style.display='block';box.style.top='48px';
+    box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{const p=list[+b.dataset.i];box.style.display='none';setCenter(p.latitude,p.longitude,p.name)});
+  }catch(e){$('meta').textContent='Search failed: '+e.message}
+}
+$('go').onclick=search;
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter')search()});
+map.on('click',e=>setCenter(e.latlng.lat,e.latlng.lng));
+$('rad').onchange=()=>load(true);
+$('refresh').onclick=()=>load(false);
+}
+</script>
+</body>
+</html>
