@@ -6,158 +6,170 @@
 <title>Fog Watch</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-/* VOICE: calm, clinical, night-driving legible
-   IDEA: an aviation visibility chart
-   PICTURE: the map itself, cells coloured by fog class
-   COLOUR/TYPE: deep navy ground, white-to-red fog scale; system sans, large numerals
-   LAYOUT: status strip on top, map fills the rest, legend bar at bottom */
 :root{--bg:#0b1433;--ink:#eef2ff;--mute:#9aa6cf;--line:#26325e}
 *{box-sizing:border-box;min-width:0}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 body{display:flex;flex-direction:column}
-header{padding:10px 12px;border-bottom:1px solid var(--line);display:grid;gap:8px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-input,button,select{font:inherit;font-size:16px;min-height:44px;border-radius:10px;border:1px solid var(--line);background:#141f47;color:var(--ink);padding:0 12px}
-input{flex:1 1 180px}
-button{cursor:pointer;font-weight:600}
-button.pri{background:#3b4fd8;border-color:#3b4fd8}
-button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #f7e463;outline-offset:1px}
-#status{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
-#here{font-size:28px;font-weight:800;line-height:1.1}
+header{padding:8px 10px;border-bottom:1px solid var(--line);display:grid;gap:6px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button,select,input[type=range]{font:inherit;font-size:15px}
+button,select{min-height:42px;border-radius:10px;border:1px solid var(--line);background:#141f47;color:var(--ink);padding:0 11px;font-weight:600;cursor:pointer}
+button.on{background:#3b4fd8;border-color:#3b4fd8}
+button:focus-visible,select:focus-visible{outline:3px solid #f7e463}
+#here{font-size:26px;font-weight:800;line-height:1.1}
 #hereType{font-weight:700}
-#meta{color:var(--mute);font-size:13px}
-#map{flex:1;min-height:300px}
-footer{padding:8px 12px;border-top:1px solid var(--line);font-size:13px;color:var(--mute)}
-.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:4px}
-.legend span{display:inline-flex;align-items:center;gap:6px;color:var(--ink)}
-.legend i{width:14px;height:14px;border-radius:3px;display:inline-block}
-#results{position:absolute;z-index:1000;background:#141f47;border:1px solid var(--line);border-radius:10px;max-width:420px;display:none}
-#results button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:none;font-weight:400}
+.mute{color:var(--mute);font-size:13px}
 .warn{color:#f7e463}
+#map{flex:1;min-height:300px;background:#0e1838}
+#sat{position:absolute;z-index:900;left:10px;bottom:10px;right:10px;max-width:520px;background:rgba(11,20,51,.92);border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:grid;gap:6px}
+#sat .row{gap:8px}
+#satTime{font-weight:800;font-variant-numeric:tabular-nums}
+input[type=range]{flex:1;accent-color:#4fc1c6}
+footer{padding:6px 10px;border-top:1px solid var(--line);font-size:12px;color:var(--mute)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:3px}
+.legend span{display:inline-flex;align-items:center;gap:5px;color:var(--ink)}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.dot{width:18px;height:18px;border-radius:50%;background:#4fc1c6;border:3px solid #fff;box-shadow:0 0 0 6px rgba(79,193,198,.35)}
 </style>
 </head>
 <body>
 <header>
-  <div class="row" style="position:relative">
-    <input id="q" placeholder="Search a place (e.g. Riyadh)" autocomplete="off">
-    <button id="go">Search</button>
-    <button id="gps" class="pri">Use my location</button>
-    <div id="results"></div>
-  </div>
   <div class="row">
-    <label for="rad" style="color:var(--mute);font-size:13px">Area</label>
-    <select id="rad"><option value="25">±25 km</option><option value="50" selected>±50 km</option><option value="100">±100 km</option></select>
-    <button id="refresh">Refresh now</button>
-    <span id="meta">Pick a location to start.</span>
+    <button id="track" class="on">● Live tracking ON</button>
+    <button id="follow" class="on">Follow me</button>
+    <select id="rad" aria-label="Area"><option value="15">±15 km</option><option value="30" selected>±30 km</option><option value="60">±60 km</option></select>
+    <span id="gpsInfo" class="mute">Waiting for GPS…</span>
   </div>
-  <div id="status"><span id="here">—</span><span id="hereType"></span></div>
+  <div><span id="here">—</span> <span id="hereType"></span></div>
+  <div id="meta" class="mute">Starting…</div>
 </header>
-<div id="map"></div>
+<div id="map" style="position:relative">
+  <div id="sat">
+    <div class="row">
+      <button id="play" class="on">❚❚ Pause</button>
+      <span>Satellite fog <span id="satTime">loading…</span></span>
+      <button id="satToggle" class="on">Satellite ON</button>
+    </div>
+    <div class="row"><span class="mute">Opacity</span><input id="op" type="range" min="0.2" max="1" step="0.05" value="0.65"><span class="mute" id="satAge"></span></div>
+    <div class="mute">Satellite colours (night): <b style="color:#9ff">pale cyan / aqua = fog or low cloud</b> · blue/purple = clear · dark red/black = high cloud.</div>
+  </div>
+</div>
 <footer>
   <div class="legend" id="legend"></div>
-  <div>Data: Open-Meteo weather models (visibility, fog code, plus a fog-risk check from humidity/dew point/wind), auto-refresh every 10 min. These are <b>model estimates, not live sensors</b>: fog patches can be smaller and denser than shown. Never use while driving.</div>
+  <div>Satellite: EUMETSAT Meteosat (MTG) Fog RGB, new frame every 10 min, ~30 min delay, ~1–2 km pixels. Grid: Open-Meteo model visibility + fog-risk from dew point &amp; wind, 15-min data. Neither can see a patch smaller than ~1 km or detect visibility of a few metres — if you see fog, trust your eyes.</div>
 </footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 {
-// Fog classes (visibility in metres), after common met-office usage
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CLASSES=[
-  {max:50,   name:'Dense fog – extreme',  col:'#e8452c',advice:'Do not drive. Pull fully off the road.'},
-  {max:200,  name:'Thick fog',            col:'#f08a24',advice:'Very dangerous. Crawl speed or stop safely.'},
-  {max:1000, name:'Fog',                  col:'#f7e463',advice:'Slow down, low beams + fog lights.'},
-  {max:5000, name:'Mist / haze',          col:'#4fc1c6',advice:'Reduced visibility, stay alert.'},
-  {max:Infinity,name:'Clear',             col:'#3b4fd8',advice:'No fog expected.'}
-];
+  {max:50,name:'Dense fog – extreme',col:'#e8452c',advice:'Do not drive. Pull fully off the road.'},
+  {max:200,name:'Thick fog',col:'#f08a24',advice:'Very dangerous. Crawl speed or stop safely.'},
+  {max:1000,name:'Fog',col:'#f7e463',advice:'Slow down, low beams + fog lights.'},
+  {max:5000,name:'Mist / haze',col:'#4fc1c6',advice:'Reduced visibility, stay alert.'},
+  {max:Infinity,name:'Clear',col:'#3b4fd8',advice:'No fog signal in the data.'}];
+const RISKY={name:'Fog likely (saturated air)',col:'#f7e463',max:1000,advice:'Air is saturated: expect fog patches, possibly very dense. Slow down.'};
+const POSS={name:'Fog possible',col:'#4fc1c6',max:5000,advice:'Air near saturation: fog can form fast.'};
 const FOG_CODES={45:'Fog',48:'Freezing (rime) fog'};
 const cls=v=>CLASSES.find(c=>v<c.max);
-// Fog risk from saturation: models often miss shallow radiation fog, so flag near-saturated calm air
 const risk=c=>{const sp=(c.temperature_2m??99)-(c.dew_point_2m??-99),w=c.wind_speed_10m??99;
-  if(sp<=1&&w<15)return{lvl:'HIGH',txt:`Fog risk HIGH: air saturated (temp only ${sp.toFixed(1)}° above dew point, wind ${w} km/h)`};
-  if(sp<=2&&w<20)return{lvl:'MED',txt:`Fog risk MEDIUM: near saturation (${sp.toFixed(1)}° spread)`};return null};
-const RISKY={name:'Fog likely (saturated air)',col:'#f7e463',max:1000,advice:'Model shows clear but air is saturated: expect fog patches. Slow down.'};
-const POSS={name:'Fog possible',col:'#4fc1c6',max:5000,advice:'Air near saturation: fog can form fast. Be ready to slow down.'};
+  if(sp<=1&&w<15)return{lvl:'HIGH',txt:`Fog risk HIGH (temp ${sp.toFixed(1)}° above dew point, wind ${w} km/h)`};
+  if(sp<=2&&w<20)return{lvl:'MED',txt:`Fog risk MEDIUM (${sp.toFixed(1)}° spread)`};return null};
 const eff=(v,c)=>{const k=cls(v),r=risk(c);if(r&&k.max>1000)return r.lvl==='HIGH'?RISKY:(k.max===Infinity?POSS:k);return k};
-const $=id=>document.getElementById(id);
-$('legend').innerHTML=CLASSES.map(c=>`<span><i style="background:${c.col}"></i>${c.name} (${c.max===Infinity?'>5 km':(c.max<1000?'<'+c.max+' m':'<'+c.max/1000+' km')})</span>`).join('');
-
-const map=L.map('map',{zoomControl:true}).setView([24.71,46.68],8);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap'}).addTo(map);
-const layer=L.layerGroup().addTo(map);
-let center=null,marker=null,timer=null;
-const N=7; // 7x7 grid
-
 const fmtVis=v=>v==null?'n/a':(v<1000?Math.round(v)+' m':(v/1000).toFixed(1)+' km');
-const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hm=d=>d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+$('legend').innerHTML=[...CLASSES.slice(0,4),RISKY].map(c=>`<span><i style="background:${c.col}"></i>${c.name}</span>`).join('');
 
-function setCenter(lat,lon,label){
-  center={lat,lon,label:label||`${lat.toFixed(3)}, ${lon.toFixed(3)}`};
-  if(marker)marker.remove();
-  marker=L.marker([lat,lon]).addTo(map).bindPopup(esc(center.label));
-  load(true);
-  clearInterval(timer);timer=setInterval(()=>load(false),10*60*1000);
+const map=L.map('map').setView([26.9,49.45],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap · EUMETSAT · Open-Meteo'}).addTo(map);
+map.createPane('sat');map.getPane('sat').style.zIndex=350;
+map.createPane('grid');map.getPane('grid').style.zIndex=420;
+const grid=L.layerGroup().addTo(map);
+
+/* ---------- live GPS ---------- */
+let me=null,meMarker=null,acc=null,watchId=null,follow=true,lastGridAt=null,lastGridTime=0,wake=null;
+const meIcon=L.divIcon({className:'',html:'<div class="dot"></div>',iconSize:[18,18],iconAnchor:[9,9]});
+function onPos(p){
+  me={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,spd:p.coords.speed};
+  if(!meMarker){meMarker=L.marker([me.lat,me.lon],{icon:meIcon,zIndexOffset:1000}).addTo(map);acc=L.circle([me.lat,me.lon],{radius:me.acc,color:'#4fc1c6',weight:1,fillOpacity:.08}).addTo(map);map.setView([me.lat,me.lon],11)}
+  else{meMarker.setLatLng([me.lat,me.lon]);acc.setLatLng([me.lat,me.lon]).setRadius(me.acc)}
+  if(follow)map.panTo([me.lat,me.lon],{animate:true});
+  $('gpsInfo').textContent=`GPS ±${Math.round(me.acc)} m${me.spd!=null?' · '+Math.round(me.spd*3.6)+' km/h':''} · ${hm(new Date())}`;
+  const moved=lastGridAt?map.distance([me.lat,me.lon],lastGridAt):1e9;
+  if(moved>3000||Date.now()-lastGridTime>5*60e3)loadGrid();
 }
+function startTrack(){
+  if(!navigator.geolocation){$('gpsInfo').textContent='GPS not available in this browser';return}
+  watchId=navigator.geolocation.watchPosition(onPos,e=>{$('gpsInfo').textContent='GPS: '+e.message+' (allow location for this site)'},{enableHighAccuracy:true,maximumAge:3000,timeout:20000});
+  $('track').className='on';$('track').textContent='● Live tracking ON';
+  try{navigator.wakeLock&&navigator.wakeLock.request('screen').then(w=>wake=w).catch(()=>{})}catch(e){}
+}
+function stopTrack(){if(watchId!=null)navigator.geolocation.clearWatch(watchId);watchId=null;$('track').className='';$('track').textContent='○ Live tracking OFF';try{wake&&wake.release()}catch(e){}}
+$('track').onclick=()=>watchId==null?startTrack():stopTrack();
+$('follow').onclick=()=>{follow=!follow;$('follow').className=follow?'on':'';if(follow&&me)map.panTo([me.lat,me.lon])};
+map.on('dragstart',()=>{follow=false;$('follow').className=''});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(watchId!=null&&navigator.wakeLock)navigator.wakeLock.request('screen').then(w=>wake=w).catch(()=>{});loadGrid();loadSat()}});
 
-async function load(fit){
-  if(!center)return;
-  const km=+$('rad').value,dLat=km/111,dLon=km/(111*Math.cos(center.lat*Math.PI/180));
-  const pts=[];
-  for(let i=0;i<N;i++)for(let j=0;j<N;j++)pts.push([center.lat-dLat+2*dLat*i/(N-1),center.lon-dLon+2*dLon*j/(N-1)]);
-  pts.push([center.lat,center.lon]);
-  $('meta').textContent='Loading…';
-  const url='https://api.open-meteo.com/v1/forecast?latitude='+pts.map(p=>p[0].toFixed(4)).join(',')+
-    '&longitude='+pts.map(p=>p[1].toFixed(4)).join(',')+
+/* ---------- model grid around me ---------- */
+const N=9;
+async function loadGrid(){
+  const c=me||{lat:map.getCenter().lat,lon:map.getCenter().lng};
+  lastGridAt=[c.lat,c.lon];lastGridTime=Date.now();
+  const km=+$('rad').value,dLat=km/111,dLon=km/(111*Math.cos(c.lat*Math.PI/180));
+  const pts=[];for(let i=0;i<N;i++)for(let j=0;j<N;j++)pts.push([c.lat-dLat+2*dLat*i/(N-1),c.lon-dLon+2*dLon*j/(N-1)]);
+  pts.push([c.lat,c.lon]);
+  const url='https://api.open-meteo.com/v1/forecast?latitude='+pts.map(p=>p[0].toFixed(4)).join(',')+'&longitude='+pts.map(p=>p[1].toFixed(4)).join(',')+
     '&current=visibility,weather_code,relative_humidity_2m,temperature_2m,dew_point_2m,wind_speed_10m&timezone=auto';
   try{
-    const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);
-    let data=await r.json();if(!Array.isArray(data))data=[data];
-    layer.clearLayers();
-    const hLat=dLat/(N-1),hLon=dLon/(N-1);
-    let worst=null,hi=0;
-    data.slice(0,N*N).forEach((d,k)=>{
-      const c=d.current||{},v=c.visibility,[la,lo]=pts[k];
-      if(v==null)return;
-      const k2=eff(v,c),rk=risk(c),fogType=FOG_CODES[c.weather_code];
-      if(!worst||v<worst.v)worst={v,la,lo};if(rk&&rk.lvl==='HIGH')hi++;
-      L.rectangle([[la-hLat,lo-hLon],[la+hLat,lo+hLon]],{stroke:false,fillColor:k2.col,fillOpacity:k2.max===Infinity?0.12:0.5})
-       .bindPopup(`<b>${esc(k2.name)}</b><br>Visibility: ${fmtVis(v)}${fogType?'<br>Type: '+esc(fogType):''}${rk?'<br><b>'+esc(rk.txt)+'</b>':''}<br>Humidity: ${c.relative_humidity_2m??'n/a'}%<br>Temp ${c.temperature_2m??'?'}° / dew point ${c.dew_point_2m??'?'}°<br>${esc(k2.advice)}`)
-       .addTo(layer);
-    });
-    const me=(data[N*N]||{}).current||{};
-    if(me.visibility!=null){
-      const k=eff(me.visibility,me),t=FOG_CODES[me.weather_code],r=risk(me);
-      $('here').textContent=fmtVis(me.visibility);
-      $('here').style.color=k.col;
-      $('hereType').textContent=`${k.name}${t?' · '+t:''} — ${k.advice}${r?' · '+r.txt:''}`;
-    }else{$('here').textContent='n/a';$('hereType').textContent='No visibility data from the model here.'}
-    const when=me.time?new Date(me.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
-    $('meta').innerHTML=`Model time ${esc(when)} · checked ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`+
-      (hi?` · <span class="warn">${hi} of ${N*N} areas: high fog risk</span>`:'')+(worst&&worst.v<1000?` · <span class="warn">Worst nearby: ${fmtVis(worst.v)}</span>`:'');
-    if(fit)map.fitBounds([[center.lat-dLat,center.lon-dLon],[center.lat+dLat,center.lon+dLon]]);
-  }catch(e){$('meta').textContent='Could not load data ('+e.message+'). Check connection, then Refresh.'}
+    let d=await (await fetch(url)).json();if(!Array.isArray(d))d=[d];
+    grid.clearLayers();const hLat=dLat/(N-1),hLon=dLon/(N-1);let hi=0;
+    d.slice(0,N*N).forEach((x,k)=>{const q=x.current||{},v=q.visibility;if(v==null)return;const k2=eff(v,q),rk=risk(q),[la,lo]=pts[k];
+      if(rk&&rk.lvl==='HIGH')hi++;
+      if(k2.max===Infinity)return;
+      L.rectangle([[la-hLat,lo-hLon],[la+hLat,lo+hLon]],{pane:'grid',stroke:false,fillColor:k2.col,fillOpacity:.35})
+       .bindPopup(`<b>${esc(k2.name)}</b><br>Model visibility ${fmtVis(v)}${FOG_CODES[q.weather_code]?'<br>Type: '+esc(FOG_CODES[q.weather_code]):''}${rk?'<br><b>'+esc(rk.txt)+'</b>':''}<br>RH ${q.relative_humidity_2m}% · ${q.temperature_2m}°/${q.dew_point_2m}° dew`).addTo(grid)});
+    const h=(d[N*N]||{}).current||{};
+    if(h.visibility!=null){const k=eff(h.visibility,h),r=risk(h),t=FOG_CODES[h.weather_code];
+      $('here').textContent=k===RISKY?'Fog likely':(k===POSS?'Fog possible':fmtVis(h.visibility));$('here').style.color=k.col;
+      $('hereType').textContent=`${k===RISKY||k===POSS?'':k.name+' · '}${t?t+' · ':''}${k.advice}${r?' · '+r.txt:''}`}
+    $('meta').innerHTML=`Model data ${esc(h.time?hm(new Date(h.time)):'')} · updated ${hm(new Date())}`+(hi?` · <span class="warn">${hi} of ${N*N} nearby areas: high fog risk</span>`:'');
+  }catch(e){$('meta').textContent='Model data failed ('+e.message+') – retrying in 1 min';setTimeout(loadGrid,60e3)}
 }
+$('rad').onchange=loadGrid;
 
-$('gps').onclick=()=>{
-  if(!navigator.geolocation){$('meta').textContent='Location not available in this browser – search instead.';return}
-  $('meta').textContent='Getting your location…';
-  navigator.geolocation.getCurrentPosition(p=>setCenter(p.coords.latitude,p.coords.longitude,'My location'),
-    e=>{$('meta').textContent='Location blocked ('+e.message+'). Search or tap the map.'},{enableHighAccuracy:true,timeout:15000});
-};
-async function search(){
-  const q=$('q').value.trim();if(!q)return;
-  const box=$('results');
-  try{
-    const r=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=6&name='+encodeURIComponent(q));
-    const d=await r.json(),list=d.results||[];
-    box.innerHTML=list.length?list.map((p,i)=>`<button data-i="${i}">${esc(p.name)}, ${esc(p.admin1||'')} ${esc(p.country||'')}</button>`).join(''):'<button disabled>No matches</button>';
-    box.style.display='block';box.style.top='48px';
-    box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{const p=list[+b.dataset.i];box.style.display='none';setCenter(p.latitude,p.longitude,p.name)});
-  }catch(e){$('meta').textContent='Search failed: '+e.message}
-}
-$('go').onclick=search;
-$('q').addEventListener('keydown',e=>{if(e.key==='Enter')search()});
-map.on('click',e=>setCenter(e.latlng.lat,e.latlng.lng));
-$('rad').onchange=()=>load(true);
-$('refresh').onclick=()=>load(false);
+/* ---------- animated satellite fog ---------- */
+const WMS='https://view.eumetsat.int/geoserver/wms';
+const LAYERS=['mtg_fd:rgb_fog','msg_iodc:rgb_fog'];
+let layer=LAYERS[0],fb=null,fz=null,times=[],frames=[],fi=0,playing=true,satOn=true,anim=null,satEnd=null;
+async function getTimes(){
+  for(const l of LAYERS){
+    try{const [ws,ln]=l.split(':');const t=await (await fetch(`https://view.eumetsat.int/geoserver/${ws}/${ln}/ows?service=WMS&version=1.3.0&request=GetCapabilities`)).text();
+      const doc=new DOMParser().parseFromString(t,'text/xml');const dim=[...doc.getElementsByTagName('Dimension')].find(x=>x.getAttribute('name')==='time');
+      if(!dim)continue;const parts=dim.textContent.trim().split(',').pop().split('/');const end=new Date(parts[1]||parts[0]);
+      const step=parts[2]==='PT15M'?15:10;if(isNaN(end))continue;
+      layer=l;satEnd=end;times=[];for(let i=11;i>=0;i--)times.push(new Date(end-i*step*60e3));return true}catch(e){}
+  }return false}
+function frameUrl(t){
+  const b=map.getBounds().pad(0.3),sw=L.CRS.EPSG3857.project(b.getSouthWest()),ne=L.CRS.EPSG3857.project(b.getNorthEast());
+  const s=map.getSize(),w=Math.min(1400,Math.round(s.x*1.6)),h=Math.min(1400,Math.round(s.y*1.6));
+  return {b,url:`${WMS}?service=WMS&version=1.3.0&request=GetMap&layers=${layer}&styles=&format=image/png&transparent=true&crs=EPSG:3857&bbox=${sw.x},${sw.y},${ne.x},${ne.y}&width=${w}&height=${h}&time=${t.toISOString().replace('.000','')}`}}
+function buildFrames(){
+  frames.forEach(f=>f.remove());frames=[];fb=null;if(!satOn||!times.length)return;fb=map.getBounds().pad(0.3);fz=map.getZoom();
+  times.forEach((t,i)=>{const {b,url}=frameUrl(t);frames.push(L.imageOverlay(url,b,{pane:'sat',opacity:i===times.length-1?+$('op').value:0,interactive:false}).addTo(map))});
+  fi=times.length-1;show(fi)}
+function show(i){frames.forEach((f,k)=>f.setOpacity(k===i?+$('op').value:0));
+  const t=times[i];if(!t)return;$('satTime').textContent=hm(t)+(i===times.length-1?' (latest)':'');
+  $('satAge').textContent=`${Math.round((Date.now()-satEnd)/60e3)} min old`}
+function tick(){if(!playing||!frames.length)return;fi=(fi+1)%frames.length;show(fi);clearTimeout(anim);anim=setTimeout(tick,fi===frames.length-1?2200:650)}
+async function loadSat(){if(await getTimes()){buildFrames();clearTimeout(anim);if(playing)anim=setTimeout(tick,1200)}else $('satTime').textContent='unavailable – retrying'}
+$('play').onclick=()=>{playing=!playing;$('play').textContent=playing?'❚❚ Pause':'▶ Play';$('play').className=playing?'on':'';if(playing)tick();else{fi=frames.length-1;show(fi)}};
+$('satToggle').onclick=()=>{satOn=!satOn;$('satToggle').className=satOn?'on':'';$('satToggle').textContent=satOn?'Satellite ON':'Satellite OFF';buildFrames()};
+$('op').oninput=()=>show(fi);
+let mv=null;map.on('moveend',()=>{if(fb&&fz===map.getZoom()&&fb.contains(map.getBounds()))return;clearTimeout(mv);mv=setTimeout(buildFrames,800)});
+setInterval(loadSat,5*60e3);setInterval(()=>{if(Date.now()-lastGridTime>5*60e3)loadGrid()},60e3);
+
+loadSat();startTrack();setTimeout(()=>{if(!me)loadGrid()},4000);
 }
 </script>
 </body>
