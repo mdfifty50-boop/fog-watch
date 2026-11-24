@@ -75,7 +75,8 @@ const risk=c=>{const sp=(c.temperature_2m??99)-(c.dew_point_2m??-99),w=c.wind_sp
   if(sp<=1&&w<15)return{lvl:'HIGH',txt:`Fog risk HIGH: air saturated (temp only ${sp.toFixed(1)}° above dew point, wind ${w} km/h)`};
   if(sp<=2&&w<20)return{lvl:'MED',txt:`Fog risk MEDIUM: near saturation (${sp.toFixed(1)}° spread)`};return null};
 const RISKY={name:'Fog likely (saturated air)',col:'#f7e463',max:1000,advice:'Model shows clear but air is saturated: expect fog patches. Slow down.'};
-const eff=(v,c)=>{const k=cls(v),r=risk(c);return(r&&r.lvl==='HIGH'&&k.max>1000)?RISKY:k};
+const POSS={name:'Fog possible',col:'#4fc1c6',max:5000,advice:'Air near saturation: fog can form fast. Be ready to slow down.'};
+const eff=(v,c)=>{const k=cls(v),r=risk(c);if(r&&k.max>1000)return r.lvl==='HIGH'?RISKY:(k.max===Infinity?POSS:k);return k};
 const $=id=>document.getElementById(id);
 $('legend').innerHTML=CLASSES.map(c=>`<span><i style="background:${c.col}"></i>${c.name} (${c.max===Infinity?'>5 km':(c.max<1000?'<'+c.max+' m':'<'+c.max/1000+' km')})</span>`).join('');
 
